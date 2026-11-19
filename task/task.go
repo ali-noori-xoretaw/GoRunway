@@ -2,15 +2,65 @@ package task
 
 import (
 	"GoRunway/models"
+	"sync"
+	"time"
 )
 
 type Task struct {
-	// TODO: Define struct fields
+	id          string
+	title       string
+	flightID    string
+	priority    models.Priority
+	status      models.TaskStatus
+	action      models.Action
+	createdAt   time.Time
+	startedAt   time.Time
+	completedAt time.Time
+	err         error
+	mu          sync.Mutex
 }
 
 func NewTask(id, title, flightID string, priority models.Priority, action models.Action) (*Task, error) {
-	// TODO: Validate fields and return a new Task in PENDING status or wrapped error
-	return nil, nil
+	if id == "" {
+		return nil, &models.ValidationError{
+			Field:  "id",
+			Reason: models.ErrInvalidTaskID.Error(),
+		}
+	}
+	if title == "" {
+		return nil, &models.ValidationError{
+			Field:  "title",
+			Reason: models.ErrEmptyTitle.Error(),
+		}
+	}
+	if flightID == "" {
+		return nil, &models.ValidationError{
+			Field:  "flightID",
+			Reason: models.ErrEmptyFlightID.Error(),
+		}
+	}
+	if priority < models.PriorityLow || models.PriorityCritical < priority {
+		return nil, &models.ValidationError{
+			Field:  "priority",
+			Reason: models.ErrInvalidPriority.Error(),
+		}
+	}
+	if action == nil {
+		return nil, &models.ValidationError{
+			Field:  "action",
+			Reason: models.ErrNilAction.Error(),
+		}
+	}
+
+	return new(Task{
+		id:        id,
+		title:     title,
+		flightID:  flightID,
+		priority:  priority,
+		status:    models.StatusPending,
+		action:    action,
+		createdAt: time.Now(),
+	}), nil
 }
 
 func (t *Task) ID() string {
