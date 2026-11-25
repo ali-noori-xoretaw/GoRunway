@@ -22,39 +22,68 @@ type Task struct {
 	rwmu        sync.RWMutex
 }
 
+type validationError struct {
+	ve  *models.ValidationError
+	err error
+}
+
+func (e *validationError) Error() string {
+	return e.ve.Error()
+}
+
+func (e *validationError) Unwrap() []error {
+	return []error{e.ve, e.err}
+
+}
+
 func NewTask(id, title, flightID string, priority models.Priority, action models.Action) (*Task, error) {
 	if id == "" {
-		return nil, &models.ValidationError{
-			Field:  "id",
-			Reason: models.ErrInvalidTaskID.Error(),
+		return nil, &validationError{
+			ve: &models.ValidationError{
+				Field:  "id",
+				Reason: models.ErrInvalidTaskID.Error(),
+			},
+			err: models.ErrInvalidTaskID,
 		}
 	}
 	if title == "" {
-		return nil, &models.ValidationError{
-			Field:  "title",
-			Reason: models.ErrEmptyTitle.Error(),
+		return nil, &validationError{
+			ve: &models.ValidationError{
+				Field:  "title",
+				Reason: models.ErrEmptyTitle.Error(),
+			},
+			err: models.ErrEmptyTitle,
 		}
 	}
 	if flightID == "" {
-		return nil, &models.ValidationError{
-			Field:  "flightID",
-			Reason: models.ErrEmptyFlightID.Error(),
+		return nil, &validationError{
+			ve: &models.ValidationError{
+				Field:  "flightID",
+				Reason: models.ErrEmptyFlightID.Error(),
+			},
+			err: models.ErrEmptyFlightID,
 		}
 	}
 	if priority < models.PriorityLow || models.PriorityCritical < priority {
-		return nil, &models.ValidationError{
-			Field:  "priority",
-			Reason: models.ErrInvalidPriority.Error(),
+		return nil, &validationError{
+			ve: &models.ValidationError{
+				Field:  "priority",
+				Reason: models.ErrInvalidPriority.Error(),
+			},
+			err: models.ErrInvalidPriority,
 		}
 	}
 	if action == nil {
-		return nil, &models.ValidationError{
-			Field:  "action",
-			Reason: models.ErrNilAction.Error(),
+		return nil, &validationError{
+			ve: &models.ValidationError{
+				Field:  "action",
+				Reason: models.ErrNilAction.Error(),
+			},
+			err: models.ErrNilAction,
 		}
 	}
 
-	return new(Task{
+	return &Task{
 		id:        id,
 		title:     title,
 		flightID:  flightID,
@@ -62,7 +91,7 @@ func NewTask(id, title, flightID string, priority models.Priority, action models
 		status:    models.StatusPending,
 		action:    action,
 		createdAt: time.Now(),
-	}), nil
+	}, nil
 }
 
 func (t *Task) ID() string {
@@ -108,7 +137,7 @@ func (t *Task) Cancel() error {
 		t.status = models.StatusCancelled
 		return nil
 	}
-	return fmt.Errorf("Task id: %s, title: %s, flightID: %s, status: %s, Err: %w", t.id, t.title, t.flightID, t.Status(), models.ErrTaskCannotCancel)
+	return fmt.Errorf("Task id: %s, title: %s, flightID: %s, status: %s, Err: %w", t.id, t.title, t.flightID, t.status, models.ErrTaskCannotCancel)
 }
 
 func (t *Task) Reset() error {
@@ -124,19 +153,17 @@ func (t *Task) Reset() error {
 	return nil
 }
 
-func (t *Task) Execute() error {
+func (t *Task) Execute() (retErr error) {
 	t.rwmu.Lock()
 	defer t.rwmu.Unlock()
-	defer func() error {
+	defer func() {
 		if r := recover(); r != nil {
 			t.status = models.StatusFailed
 			completedAt := time.Now()
 			t.completedAt = &completedAt
-			err := fmt.Errorf("task panicked: %v", r)
-			t.err = err
-			return err
+			retErr = fmt.Errorf("task panicked: %v", r)
+			t.err = retErr
 		}
-		return nil
 	}()
 	if t.status != models.StatusPending {
 		return models.ErrTaskNotPending
@@ -169,6 +196,6 @@ func (t *Task) GetInfo() models.TaskInfo {
 		FlightID:  t.flightID,
 		Priority:  t.priority,
 		Status:    t.status,
-		CreatedAt: t.startedAt.Format(time.RFC3339),
+		CreatedAt: t.createdAt.Format(time.RFC3339),
 	}
 }
