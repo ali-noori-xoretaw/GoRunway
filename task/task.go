@@ -2,6 +2,8 @@ package task
 
 import (
 	"GoRunway/models"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -14,10 +16,10 @@ type Task struct {
 	status      models.TaskStatus
 	action      models.Action
 	createdAt   time.Time
-	startedAt   time.Time
-	completedAt time.Time
+	startedAt   *time.Time
+	completedAt *time.Time
 	err         error
-	mu          sync.Mutex
+	rwmu        sync.RWMutex
 }
 
 func NewTask(id, title, flightID string, priority models.Priority, action models.Action) (*Task, error) {
@@ -64,51 +66,109 @@ func NewTask(id, title, flightID string, priority models.Priority, action models
 }
 
 func (t *Task) ID() string {
-	// TODO: Safely return task ID
-	return ""
+	t.rwmu.RLock()
+	defer t.rwmu.RUnlock()
+	return t.id
 }
 
 func (t *Task) Title() string {
-	// TODO: Safely return task title
-	return ""
+	t.rwmu.RLock()
+	defer t.rwmu.RUnlock()
+	return t.title
 }
 
 func (t *Task) FlightID() string {
-	// TODO: Safely return flight ID
-	return ""
+	t.rwmu.RLock()
+	defer t.rwmu.RUnlock()
+	return t.flightID
 }
 
 func (t *Task) Priority() models.Priority {
-	// TODO: Safely return priority
-	return 0
+	t.rwmu.RLock()
+	defer t.rwmu.RUnlock()
+	return t.priority
 }
 
 func (t *Task) Status() models.TaskStatus {
-	// TODO: Safely return status
-	return ""
+	t.rwmu.RLock()
+	defer t.rwmu.RUnlock()
+	return t.status
 }
 
 func (t *Task) Error() error {
-	// TODO: Safely return recorded error
-	return nil
+	t.rwmu.RLock()
+	defer t.rwmu.RUnlock()
+	return t.err
 }
 
 func (t *Task) Cancel() error {
-	// TODO: Cancel pending task or return error
-	return nil
+	t.rwmu.Lock()
+	defer t.rwmu.Unlock()
+	if t.status == models.StatusPending {
+		t.status = models.StatusCancelled
+		return nil
+	}
+	return fmt.Errorf("Task id: %s, title: %s, flightID: %s, status: %s, Err: %w", t.id, t.title, t.flightID, t.Status(), models.ErrTaskCannotCancel)
 }
 
 func (t *Task) Reset() error {
-	// TODO: Reset completed/failed/cancelled task to PENDING or return error
+	t.rwmu.Lock()
+	defer t.rwmu.Unlock()
+	if t.status == models.StatusRunning {
+		return errors.New("cannot reset running task")
+	}
+	t.status = models.StatusPending
+	t.err = nil
+	t.startedAt = nil
+	t.completedAt = nil
 	return nil
 }
 
 func (t *Task) Execute() error {
-	// TODO: Execute action with panic recovery, update status and timestamps
+	t.rwmu.Lock()
+	defer t.rwmu.Unlock()
+	defer func() error {
+		if r := recover(); r != nil {
+			t.status = models.StatusFailed
+			completedAt := time.Now()
+			t.completedAt = &completedAt
+			err := fmt.Errorf("task panicked: %v", r)
+			t.err = err
+			return err
+		}
+		return nil
+	}()
+	if t.status != models.StatusPending {
+		return models.ErrTaskNotPending
+	}
+
+	t.status = models.StatusRunning
+	startedAt := time.Now()
+	t.startedAt = &startedAt
+
+	err := t.action()
+	if err != nil {
+		t.status = models.StatusFailed
+		t.err = err
+		return err
+	}
+
+	t.status = models.StatusCompleted
+	completedAt := time.Now()
+	t.completedAt = &completedAt
+
 	return nil
 }
 
 func (t *Task) GetInfo() models.TaskInfo {
-	// TODO: Return immutable snapshot of task info
-	return models.TaskInfo{}
+	t.rwmu.RLock()
+	defer t.rwmu.RUnlock()
+	return models.TaskInfo{
+		ID:        t.id,
+		Title:     t.title,
+		FlightID:  t.flightID,
+		Priority:  t.priority,
+		Status:    t.status,
+		CreatedAt: t.startedAt.Format(time.RFC3339),
+	}
 }
